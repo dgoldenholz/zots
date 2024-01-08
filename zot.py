@@ -1,16 +1,16 @@
-
 import numpy as np
 import zot_constants as CC
 import matplotlib.pyplot as plt
-from joblib import Parallel, delayed
 
 class zot():
-    def __init__(self,start_x,start_y,randomDNA=True,dnaData=None):
+    def __init__(self,start_x,start_y,randomDNA=True,dnaData=None,
+                 number_of_mutations_per_parent=CC.number_of_mutations_per_parent):
         if randomDNA==False:
             self.dna = dnaData
         else:
             self.dna = np.random.randint(low=0,high=4,size=(2,CC.dna_length))
         self.start_x, self.start_y = start_x, start_y
+        self.number_of_mutations_per_parent = number_of_mutations_per_parent
 
     def offer_dna(self):
         # apply genetic crossover
@@ -31,8 +31,8 @@ class zot():
 
         # apply random mutations
         if np.random.random()<CC.prob_One_Parent_mutates:
-            mask = np.random.randint(low=0,high=CC.dna_length,size=CC.number_of_mutations_per_parent)
-            thisDNA[mask] = np.random.randint(low=0,high=4,size=CC.number_of_mutations_per_parent)
+            mask = np.random.permutation(np.arange(CC.dna_length))[0:self.number_of_mutations_per_parent]
+            thisDNA[mask] = np.random.randint(low=0,high=4,size=self.number_of_mutations_per_parent)
         return thisDNA.copy()
     
     def reset_pos(self):
@@ -105,8 +105,9 @@ class all_zots():
     def __init__(self,theMaze):
         self.theMaze = theMaze
         self.startx, self.starty = theMaze.get_startXY()
-        self.zotList = [zot(self.startx,self.starty) for _ in range(CC.how_many_zots)]
-    
+        self.number_of_mutations_per_parent = theMaze.number_of_mutations_per_parent
+        self.zotList = [zot(self.startx,self.starty,number_of_mutations_per_parent=self.number_of_mutations_per_parent) for _ in range(CC.how_many_zots)]
+
     def score_population(self,gen,doSHOW=True):
         self.scoreList = np.array(
             [self.zotList[i].ran_by_DNA(self.theMaze) for i in range(CC.how_many_zots)])
@@ -121,11 +122,13 @@ class all_zots():
             self.show_best() 
         return self.scoreList, bestScore
     
+    def get_best(self):
+        # return best zot and best score of that zot
+        return self.zotList[self.indList[0]],self.scoreList[self.indList[0]]
+    
     def show_best(self,ax=None):
-        self.theMaze.drawMaze_andZot(self.zotList[self.indList[0]],ax=ax)
-        #plt.plot(self.scoreList[self.indList])
-        #plt.show()
-        bestScore = self.scoreList[self.indList[0]]
+        bestZot,bestScore = self.get_best()
+        self.theMaze.drawMaze_andZot(bestZot,ax=ax)
         print(f'Best score ={bestScore}, Mean score={np.nanmean(self.scoreList)}, Max={self.scoreList[self.indList[-1]]}')
 
     def do_wrapper(self,i):

@@ -3,6 +3,10 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 import zot_constants as CC
+from zot import all_zots
+import pandas as pd
+from lifelines import KaplanMeierFitter
+from tqdm.auto import trange
 
 # maze code was adopted and changed based on original code from
 #OrWestSide  Orestis Zekai
@@ -10,7 +14,8 @@ import zot_constants as CC
 
 # Maze generator -- Randomized Prim Algorithm
 class maze():
-    def __init__(self,height=10,width=20):
+    def __init__(self,height=10,width=20,scoreType='best',
+                 number_of_mutations_per_parent=CC.number_of_mutations_per_parent):
         self.height = height
         self.width = width
         # Init variables
@@ -20,6 +25,7 @@ class maze():
         self.maze = []
         self.grid = []
         self.scores = []
+        self.number_of_mutations_per_parent = number_of_mutations_per_parent
 
         # Denote all cells as unvisited
         for i in range(0, self.height):
@@ -227,7 +233,14 @@ class maze():
             if (self.maze[self.height-2][i] == 'c'):
                 self.maze[self.height-1][i] = 'c'
                 break
-            
+        
+        # make a grid and compute scores
+        self.convertToGrid()
+        if scoreType=='best':
+            self.scoreGrid()
+        elif scoreType=='euclid':
+            self.scoreEuclidGrid()
+
         return
 
     def get_starting_finishing_points(self):
@@ -283,6 +296,16 @@ class maze():
                             self.checkValid(RIGHTx,RIGHTy)] )
         print(f'Solved in {iter} cycles.')
     
+    def scoreEuclidGrid(self):
+        startXY,endXY = self.get_starting_finishing_points()
+        
+        self.scores = np.ones((self.width,self.height))
+        self.scores[endXY[0],endXY[1]] = 0
+        for x in range(self.width):
+            for y in range(self.height):
+                dist = np.sqrt((x-endXY[0])**2 + (y-endXY[1])**2)
+                self.scores[x,y] = dist
+
     def getLocalScore(self,x,y):
         return self.scores[x,y]
     
@@ -306,7 +329,8 @@ class maze():
             plt.show()
 
     def drawMaze_andLocation(self,x,y,ax=None):
-        self.drawMaze(doSHOW=False)
+        #self.drawMaze(doSHOW=False)
+        self.drawScores(doSHOW=False)
         # figure out how to put a full zot in there
         if ax==None:
             plt.plot(x,y,'rx')
@@ -318,11 +342,6 @@ class maze():
         xlist,ylist = one_zot.report_DNA_path()
         x,y = one_zot.showPos()
         self.drawMaze_andLocation(x,y,ax)
-        #if ax == None:
-        #    plt.plot(xlist,ylist,'ro')
-        #    plt.show()
-        #else:
-        #    ax.plot(xlist,ylist,'ro')
 
         for iter in range(len(xlist)):
             if ax == None:
@@ -330,17 +349,16 @@ class maze():
                 
             else:
                 ax.plot(xlist[iter],ylist[iter],'ro')        
-        if ax==None:
-            plt.show()
-    
+
     def isWall(self,x,y):
         # returns 1 if wall, 0 if hall
         return self.grid[x,y]==1
     
-    def drawScores(self):
+    def drawScores(self,doSHOW=True):
         plt.imshow(np.transpose(self.scores),norm='linear')
         plt.colorbar()
-        plt.show()
+        #if doSHOW==True:
+        #    plt.show()
 
     # Find number of surrounding cells
     def surroundingCells(self,rand_wall):
@@ -356,4 +374,61 @@ class maze():
 
         return s_cells
 
+def solve_maze(mymaze,noBar=False):
+    population = all_zots(mymaze)
+    if noBar==False:
+        pbar = trange(CC.max_generations, desc='Generations', leave=True)
+    else:
+        pbar = range(CC.max_generations)
+    bestList = -np.ones(CC.max_generations)
+    t0 = time.time()
+    Tdur = np.inf
+    for gen in pbar:
+        scoreList,bestScore = population.score_population(gen,doSHOW=False)
+        bestList[gen] = bestScore
+        if noBar==False:
+            pbar.set_postfix({'Bestscore':bestScore})
+        if bestScore==0:
+            Tdur = time.time()-t0
+            break
+        population.choose_mates()
+    bestZot,bestScore = population.get_best()
+    return Tdur, bestZot, bestList[:gen+1]
 
+def drawOneSolution(mymaze, bestZot, bestList,justPlot2):
+    if justPlot2==False:
+        plt.subplot(2,2,1)
+        mymaze.drawScores()
+        plt.subplot(2,2,2)
+        mymaze.drawMaze_andZot(bestZot)
+    else:
+        plt.subplot(2,1,2)
+        plt.plot(np.arange(len(bestList)),bestList)
+        plt.title('Learning curve')
+        plt.xlabel('Generation')
+        plt.ylabel('Score')
+
+
+def show_resulting(mymaze,bestZot,bestList,Tdur,bestScores):
+    drawOneSolution(mymaze, bestZot, bestList,justPlot2=False)
+    
+
+    durations = [len(score) for score in bestScores]
+    events = [score[-1] == 0 for score in bestScores]
+    df = pd.DataFrame({'duration': durations,
+                    'event': events})
+
+    # Create a KaplanMeierFitter object
+    kmf = KaplanMeierFitter()
+
+    # Fit the data into the model
+    kmf.fit(df['duration'], df['event'], label='KM Estimate')
+
+    # Plot the curve with the confidence interval
+    plt.subplot(2,1,2)
+    kmf.plot()
+    #plt.title('Kaplan Meier Curve with Confidence Interval')
+    plt.xlabel('Number of Steps')
+    plt.ylabel('Probability of Not-solved')
+    plt.show()
+    print(f'Duration: {np.floor(np.mean(Tdur))} +/- {np.floor(np.std(Tdur))}')
